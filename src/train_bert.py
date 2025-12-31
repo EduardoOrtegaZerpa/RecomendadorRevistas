@@ -20,6 +20,7 @@ from data_loader import load_dataset_from_folders, split_train_test
 from plots import plot_confusion_matrix, plot_f1_scores, plot_accuracy_per_class
 
 
+# DATASET
 class TextDataset(Dataset):
     def __init__(self, encodings, labels):
         self.encodings = encodings
@@ -34,6 +35,7 @@ class TextDataset(Dataset):
         return item
 
 
+# MAIN
 def main():
     set_seed(42)
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -45,6 +47,7 @@ def main():
     df = load_dataset_from_folders(DATA_RAW_DIR)
     train_df, test_df = split_train_test(df, test_size=0.2, seed=42)
 
+    # Encode labels
     le = LabelEncoder()
     y_train = le.fit_transform(train_df["label"])
     y_test = le.transform(test_df["label"])
@@ -61,6 +64,7 @@ def main():
         padding=True,
         max_length=256
     )
+
     test_enc = tokenizer(
         test_df["text"].tolist(),
         truncation=True,
@@ -72,6 +76,7 @@ def main():
         {k: torch.tensor(v) for k, v in train_enc.items()},
         y_train
     )
+
     test_dataset = TextDataset(
         {k: torch.tensor(v) for k, v in test_enc.items()},
         y_test
@@ -113,9 +118,15 @@ def main():
     # Predictions
     preds = trainer.predict(test_dataset)
     y_pred = np.argmax(preds.predictions, axis=-1)
+    y_test_str = le.inverse_transform(y_test)
+    y_pred_str = le.inverse_transform(y_pred)
 
     # Metrics
-    cm = confusion_matrix(y_test, y_pred, labels=list(range(len(labels))))
+    cm = confusion_matrix(
+        y_test_str,
+        y_pred_str,
+        labels=labels
+    )
 
     # Plots
     plot_confusion_matrix(
@@ -126,8 +137,8 @@ def main():
     )
 
     plot_f1_scores(
-        y_test,
-        y_pred,
+        y_test_str,
+        y_pred_str,
         labels,
         REPORTS_DIR / "f1_scores_bert.png",
         title="F1-score per Journal (BERT)"
