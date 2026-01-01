@@ -6,6 +6,7 @@ import torch
 from torch.utils.data import Dataset
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import StratifiedShuffleSplit
 
 from transformers import (
     BertTokenizerFast,
@@ -16,11 +17,10 @@ from transformers import (
 )
 
 from config import DATA_RAW_DIR, BERT_DIR, REPORTS_DIR
-from data_loader import load_dataset_from_folders, split_train_test
+from data_loader import load_dataset_from_folders
 from plots import plot_confusion_matrix, plot_f1_scores, plot_accuracy_per_class
 
 
-# DATASET
 class TextDataset(Dataset):
     def __init__(self, encodings, labels):
         self.encodings = encodings
@@ -35,7 +35,6 @@ class TextDataset(Dataset):
         return item
 
 
-# MAIN
 def main():
     set_seed(42)
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -45,15 +44,28 @@ def main():
 
     # Load data
     df = load_dataset_from_folders(DATA_RAW_DIR)
-    train_df, test_df = split_train_test(df, test_size=0.2, seed=42)
 
     # Encode labels
     le = LabelEncoder()
-    y_train = le.fit_transform(train_df["label"])
-    y_test = le.transform(test_df["label"])
-
+    y = le.fit_transform(df["label"])
+    y = np.array(y)
     labels = list(le.classes_)
     joblib.dump(le, BERT_DIR / "label_encoder.joblib")
+
+    # Stratified split
+    splitter = StratifiedShuffleSplit(
+        n_splits=1,
+        test_size=0.2,
+        random_state=42
+    )
+
+    x = df["text"].to_numpy().reshape(-1, 1)
+    train_idx, test_idx = next(splitter.split(x, y))
+    train_df = df.iloc[train_idx]
+    test_df = df.iloc[test_idx]
+
+    y_train = y[train_idx]
+    y_test = y[test_idx]
 
     # Tokenizer
     tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
@@ -82,7 +94,6 @@ def main():
         y_test
     )
 
-    # Model
     model = BertForSequenceClassification.from_pretrained(
         "bert-base-uncased",
         num_labels=len(labels)
@@ -95,8 +106,6 @@ def main():
         per_device_eval_batch_size=16,
         eval_strategy="epoch",
         save_strategy="epoch",
-        logging_strategy="steps",
-        logging_steps=50,
         learning_rate=2e-5,
         weight_decay=0.01,
         load_best_model_at_end=True,
@@ -118,10 +127,10 @@ def main():
     # Predictions
     preds = trainer.predict(test_dataset)
     y_pred = np.argmax(preds.predictions, axis=-1)
+
     y_test_str = le.inverse_transform(y_test)
     y_pred_str = le.inverse_transform(y_pred)
 
-    # Metrics
     cm = confusion_matrix(
         y_test_str,
         y_pred_str,
@@ -151,11 +160,10 @@ def main():
         title="Accuracy per Journal (BERT)"
     )
 
-    # Save model
     model.save_pretrained(BERT_DIR / "final_model")
     tokenizer.save_pretrained(BERT_DIR / "final_model")
 
-    print("BERT training finished. All plots saved in outputs/reports/")
+    print("BERT training finished (Stratified split).")
 
 
 if __name__ == "__main__":
